@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Organized</title>
+  <title>MY Life Organized</title>
   <style>
     body {
       font-family: Arial, sans-serif;
@@ -76,12 +76,39 @@
       font-size: 1rem;
       cursor: pointer;
     }
+    .search-container {
+      margin-bottom: 10px;
+    }
+    .search-container input {
+      width: 100%;
+      padding: 5px;
+      font-size: 1rem;
+    }
+    input[type="text"] {
+      width: 60%;
+    }
+    input[type="date"] {
+      width: 30%;
+    }
   </style>
 </head>
 <body>
   <div class="container">
     <div class="tasks-panel">
+      <div class="search-container">
+        <input type="text" id="search" placeholder="Search tasks..." oninput="searchTasks()">
+      </div>
+      <label for="filter">Filter: </label>
+      <select id="filter" onchange="applyFilter()">
+        <option value="all">All</option>
+        <option value="today">Due Today</option>
+        <option value="soon">Due Soon</option>
+        <option value="overdue">Overdue</option>
+      </select>
       <button onclick="addTask()">Add Task</button>
+      <button onclick="exportTasks()">Export</button>
+      <input type="file" accept="application/json" onchange="importTasks(event)">
+      <button onclick="clearAllTasks()">Clear All</button>
       <div id="tasks"></div>
     </div>
     <div class="notes-panel">
@@ -93,92 +120,193 @@
       </div>
     </div>
   </div>
-
   <script>
     let selectedTaskId = null;
 
+    function getDeadlineStatus(dateStr) {
+      const today = new Date();
+      const deadline = new Date(dateStr);
+      const diff = (deadline - today) / (1000 * 60 * 60 * 24);
+      if (diff < 0) return 'red';
+      if (diff <= 2) return 'amber';
+      return 'normal';
+    }
+
+    function renderTasks() {
+      const tasksContainer = document.getElementById('tasks');
+      tasksContainer.innerHTML = '';
+      const tasks = JSON.parse(localStorage.getItem('checklist-tasks')) || [];
+      tasks.forEach(task => {
+        const taskDiv = document.createElement('div');
+        taskDiv.className = 'task';
+        taskDiv.id = task.id;
+        taskDiv.draggable = true;
+
+        const header = document.createElement('div');
+        header.className = 'task-header';
+        header.innerHTML = `
+          <input type="text" value="${task.title}" onchange="updateTask('${task.id}')">
+          <input type="date" value="${task.deadline}" onchange="updateTask('${task.id}')">
+          <span class="deadline ${getDeadlineStatus(task.deadline)}">${task.deadline}</span>
+          <button onclick="addSubtask('${task.id}')">+Sub</button>
+          <button onclick="deleteTask('${task.id}')">🗑</button>
+        `;
+        header.onclick = () => selectTask(task.id);
+
+        const subtasksDiv = document.createElement('div');
+        subtasksDiv.className = 'subtasks';
+        task.subtasks.forEach((sub, idx) => {
+          const subDiv = document.createElement('div');
+          subDiv.className = 'subtask';
+          subDiv.innerHTML = `
+            <input type="checkbox" ${sub.done ? 'checked' : ''} onchange="toggleSubtask('${task.id}', ${idx})">
+            <span>${sub.text}</span>
+          `;
+          subtasksDiv.appendChild(subDiv);
+        });
+
+        taskDiv.appendChild(header);
+        taskDiv.appendChild(subtasksDiv);
+        tasksContainer.appendChild(taskDiv);
+      });
+    }
+
+    function saveAllTasks() {
+      const tasks = JSON.parse(localStorage.getItem('checklist-tasks')) || [];
+      tasks.forEach(task => {
+        task.notes = localStorage.getItem(`${task.id}-notes`) || '';
+      });
+      localStorage.setItem('checklist-tasks', JSON.stringify(tasks));
+    }
+
     function addTask() {
-      const taskId = `task-${Date.now()}`;
-      const taskDiv = document.createElement('div');
-      taskDiv.className = 'task';
-      taskDiv.id = taskId;
-      taskDiv.innerHTML = `
-        <div class="task-header">
-          <input type="text" placeholder="Main Task Title" onchange="selectTask('${taskId}')" onclick="selectTask('${taskId}')">
-          <input type="date" onchange="updateDeadlineColor(this)">
-          <span class="deadline normal">Deadline</span>
-          <button onclick="addSubtask('${taskId}')">+ Subtask</button>
-          <button onclick="deleteTask('${taskId}')">🗑️</button>
-        </div>
-        <div class="subtasks"></div>
-      `;
-      document.getElementById('tasks').appendChild(taskDiv);
+      const id = 'task-' + Date.now();
+      const tasks = JSON.parse(localStorage.getItem('checklist-tasks')) || [];
+      tasks.push({ id, title: 'New Task', deadline: '', subtasks: [], notes: '' });
+      localStorage.setItem('checklist-tasks', JSON.stringify(tasks));
+      renderTasks();
+    }
+
+    function deleteTask(id) {
+      if (!confirm('Delete this task?')) return;
+      let tasks = JSON.parse(localStorage.getItem('checklist-tasks')) || [];
+      tasks = tasks.filter(task => task.id !== id);
+      localStorage.removeItem(`${id}-notes`);
+      localStorage.setItem('checklist-tasks', JSON.stringify(tasks));
+      if (selectedTaskId === id) {
+        document.getElementById('task-notes').value = '';
+        selectedTaskId = null;
+      }
+      renderTasks();
     }
 
     function addSubtask(taskId) {
-      const subtasksDiv = document.querySelector(`#${taskId} .subtasks`);
-      const subtaskDiv = document.createElement('div');
-      subtaskDiv.className = 'subtask';
-      subtaskDiv.innerHTML = `
-        <input type="checkbox">
-        <span contenteditable="true">Subtask</span>
-      `;
-      subtasksDiv.appendChild(subtaskDiv);
+      const tasks = JSON.parse(localStorage.getItem('checklist-tasks')) || [];
+      const task = tasks.find(t => t.id === taskId);
+      task.subtasks.push({ text: 'New Subtask', done: false });
+      localStorage.setItem('checklist-tasks', JSON.stringify(tasks));
+      renderTasks();
     }
 
-    function updateDeadlineColor(dateInput) {
-      const deadlineSpan = dateInput.nextElementSibling;
-      const dateValue = new Date(dateInput.value);
-      const now = new Date();
-      const diff = (dateValue - now) / (1000 * 3600 * 24);
-
-      if (diff < 0) {
-        deadlineSpan.className = 'deadline red';
-        deadlineSpan.textContent = 'Overdue';
-      } else if (diff <= 1) {
-        deadlineSpan.className = 'deadline red';
-        deadlineSpan.textContent = 'Today';
-      } else if (diff <= 2) {
-        deadlineSpan.className = 'deadline amber';
-        deadlineSpan.textContent = 'Soon';
-      } else {
-        deadlineSpan.className = 'deadline normal';
-        deadlineSpan.textContent = 'Upcoming';
-      }
+    function toggleSubtask(taskId, idx) {
+      const tasks = JSON.parse(localStorage.getItem('checklist-tasks')) || [];
+      const task = tasks.find(t => t.id === taskId);
+      task.subtasks[idx].done = !task.subtasks[idx].done;
+      localStorage.setItem('checklist-tasks', JSON.stringify(tasks));
+      renderTasks();
     }
 
-    function selectTask(taskId) {
-      selectedTaskId = taskId;
-      const notes = localStorage.getItem(taskId + '-notes') || '';
-      document.getElementById('task-notes').value = notes;
+    function updateTask(taskId) {
+      const taskDiv = document.getElementById(taskId);
+      const title = taskDiv.querySelector('input[type="text"]').value;
+      const deadline = taskDiv.querySelector('input[type="date"]').value;
+      const tasks = JSON.parse(localStorage.getItem('checklist-tasks')) || [];
+      const task = tasks.find(t => t.id === taskId);
+      task.title = title;
+      task.deadline = deadline;
+      localStorage.setItem('checklist-tasks', JSON.stringify(tasks));
+      renderTasks();
+    }
+
+    function selectTask(id) {
+      selectedTaskId = id;
+      document.getElementById('task-notes').value = localStorage.getItem(`${id}-notes`) || '';
     }
 
     function saveNotes() {
       if (selectedTaskId) {
-        const note = document.getElementById('task-notes').value;
-        localStorage.setItem(selectedTaskId + '-notes', note);
-        alert('Notes saved!');
+        localStorage.setItem(`${selectedTaskId}-notes`, document.getElementById('task-notes').value);
       }
     }
 
     function clearNotes() {
       if (selectedTaskId) {
+        localStorage.removeItem(`${selectedTaskId}-notes`);
         document.getElementById('task-notes').value = '';
-        localStorage.removeItem(selectedTaskId + '-notes');
       }
     }
 
-    function deleteTask(taskId) {
-      const taskElem = document.getElementById(taskId);
-      if (taskElem) {
-        taskElem.remove();
-        if (selectedTaskId === taskId) {
-          document.getElementById('task-notes').value = '';
-          selectedTaskId = null;
-        }
-        localStorage.removeItem(taskId + '-notes');
+    function clearAllTasks() {
+      if (confirm('Are you sure you want to delete all tasks?')) {
+        localStorage.removeItem('checklist-tasks');
+        Object.keys(localStorage).forEach(key => {
+          if (key.endsWith('-notes')) localStorage.removeItem(key);
+        });
+        document.getElementById('tasks').innerHTML = '';
+        document.getElementById('task-notes').value = '';
+        selectedTaskId = null;
       }
     }
+
+    function exportTasks() {
+      saveAllTasks();
+      const dataStr = localStorage.getItem('checklist-tasks');
+      const dataUri = 'data:application/json;charset=utf-8,' + encodeURIComponent(dataStr);
+      const link = document.createElement('a');
+      link.setAttribute('href', dataUri);
+      link.setAttribute('download', 'tasks.json');
+      link.click();
+    }
+
+    function importTasks(event) {
+      const file = event.target.files[0];
+      const reader = new FileReader();
+      reader.onload = function(e) {
+        const data = JSON.parse(e.target.result);
+        localStorage.setItem('checklist-tasks', JSON.stringify(data));
+        data.forEach(task => {
+          localStorage.setItem(`${task.id}-notes`, task.notes || '');
+        });
+        renderTasks();
+      };
+      reader.readAsText(file);
+    }
+
+    function searchTasks() {
+      const keyword = document.getElementById('search').value.toLowerCase();
+      const taskDivs = document.querySelectorAll('.task');
+      taskDivs.forEach(div => {
+        const title = div.querySelector('input[type="text"]').value.toLowerCase();
+        div.style.display = title.includes(keyword) ? '' : 'none';
+      });
+    }
+
+    function applyFilter() {
+      const filter = document.getElementById('filter').value;
+      const taskDivs = document.querySelectorAll('.task');
+      const today = new Date().toISOString().split('T')[0];
+
+      taskDivs.forEach(div => {
+        const deadline = div.querySelector('input[type="date"]').value;
+        const status = getDeadlineStatus(deadline);
+        div.style.display = (filter === 'all' || 
+          (filter === 'today' && deadline === today) ||
+          (filter === 'soon' && status === 'amber') ||
+          (filter === 'overdue' && status === 'red')) ? '' : 'none';
+      });
+    }
+
+    window.onload = renderTasks;
   </script>
 </body>
 </html>
